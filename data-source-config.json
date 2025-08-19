@@ -1,0 +1,9 @@
+{
+  "dataSourceConfiguration": {
+    "type": "S3",
+    "s3Configuration": {
+      "bucketArn": "arn:aws:s3:::minedu-educacion-peru",
+      "inclusionPrefixes": ["curriculo/"]
+    }
+  }
+}

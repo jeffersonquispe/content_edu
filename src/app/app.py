@@ -1,199 +1,437 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime
-from collections import Counter
+import sys
 import os
-from dotenv import load_dotenv
+import re
 
-load_dotenv()
+# Configurar página ANTES que cualquier otra cosa
+st.set_page_config(page_title="Generador Educativo AI", page_icon="🤖", layout="wide")
 
-# Importar el DynamoDBManager
-from core.database_management import DynamoDBManager
-# Inicializar DynamoDB Manager
-db_manager = DynamoDBManager()
+# Título principal
+st.title("Generador de contenido educativo AI 🤖")
+st.markdown("Genera material educativo con exportación a Word")
 
-# --- Funciones de Utilidad para el Dashboard ---
+# Verificar imports paso a paso
+with st.spinner("🔄 Verificando dependencias..."):
+    # Agregar path
+    try:
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    except Exception as e:
+        st.error(f"❌ Error agregando path: {e}")
 
+    # Verificar python-docx
+    try:
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Inches
+        from datetime import datetime
+        from io import BytesIO
+        DOCX_OK = True
+    except ImportError as e:
+        st.error(f"❌ python-docx no disponible: {e}")
+        DOCX_OK = False
 
-sentiment_map = {
-    'POSITIVE': 5,
-    'NEUTRAL': 3,
-    'NEGATIVE': 1,
-    'MIXED': 2 
-}
+    # Verificar servicios Bedrock
+    try:
+        from core.bedrock_services import generar_programacion_curricular, generar_imagen_promocional, generar_resumen_comentarios
+        SERVICES_OK = True
+    except Exception as e:
+        st.error(f"❌ Error importando servicios: {e}")
+        SERVICES_OK = False
 
-# --- Funciones de Utilidad para el Dashboard ---
+# Función para procesar y formatear el contenido generado
+def formatear_contenido_educativo(contenido_raw, grado):
+    """
+    Procesa el contenido generado y lo estructura como un documento educativo profesional
+    """
+    # Título principal del documento
+    contenido_formateado = f"""
+# 📚 PROGRAMACIÓN CURRICULAR - CIENCIA Y TECNOLOGÍA
 
-def calculate_average_sentiment_score(comments_df):
-    """Calcula el puntaje promedio de sentimiento (1-5) a partir de los puntajes de Comprehend."""
-    if comments_df.empty:
-        return 0.0
+## 🎓 {grado}º DE EDUCACIÓN SECUNDARIA
+
+---
+
+### 📋 INFORMACIÓN GENERAL
+- **Área Curricular:** Ciencia y Tecnología
+- **Grado:** {grado}º de Secundaria
+- **Fecha de Elaboración:** {datetime.now().strftime('%d de %B de %Y')}
+- **Documento generado por:** IA Educativa
+
+---
+
+### 📖 CONTENIDO DE LA PROGRAMACIÓN
+
+{contenido_raw}
+
+---
+
+### 📝 NOTAS METODOLÓGICAS
+
+Esta programación curricular ha sido diseñada siguiendo los lineamientos del Currículo Nacional de la Educación Básica del Perú, adaptándose a las necesidades específicas del {grado}º grado de educación secundaria.
+
+**Recomendaciones de implementación:**
+- Considerar el contexto sociocultural de los estudiantes
+- Adaptar las estrategias según los ritmos de aprendizaje
+- Integrar recursos tecnológicos disponibles
+- Promover el aprendizaje colaborativo y la indagación científica
+
+---
+
+*Documento generado automáticamente por el Sistema de IA Educativa*
+"""
+    return contenido_formateado
+
+# Función mejorada para crear Word
+def crear_documento_profesional(contenido, titulo, grado):
+    if not DOCX_OK:
+        return None
     
-    # Aquí ya no necesitas definir sentiment_map, solo usarlo
-    comments_df['sentiment_score_numeric'] = comments_df['sentiment'].map(sentiment_map).fillna(0)
+    doc = Document()
     
-    return comments_df['sentiment_score_numeric'].mean()
-
-
-def create_word_cloud_data(comments_df):
-    """Prepara datos para una nube de palabras (simplificado para Streamlit)."""
-    if comments_df.empty:
-        return []
+    # Configurar propiedades del documento
+    doc.core_properties.title = titulo
+    doc.core_properties.author = "Sistema IA Educativa"
+    doc.core_properties.subject = f"Programación Curricular {grado}º Secundaria"
     
-    all_words = ' '.join(comments_df['text']).lower().split()
-    stopwords = set(["el", "la", "los", "las", "un", "una", "unos", "unas", "de", "con", "en", "para", "por", "es", "no", "y", "pero", "que", "muy", "me", "su", "mi", "se"])
-    filtered_words = [word for word in all_words if word.isalpha() and word not in stopwords]
+    # Título principal
+    titulo_principal = doc.add_heading(f"PROGRAMACIÓN CURRICULAR", 0)
+    titulo_principal.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    word_counts = Counter(filtered_words)
-    # Retorna los N más comunes
-    return [{'text': word, 'value': count} for word, count in word_counts.most_common(50)]
+    # Subtítulo
+    subtitulo = doc.add_heading(f"CIENCIA Y TECNOLOGÍA - {grado}º SECUNDARIA", 1)
+    subtitulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # Información del documento
+    info_para = doc.add_paragraph()
+    info_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    info_run = info_para.add_run(f"Fecha: {datetime.now().strftime('%d/%m/%Y')}\nGenerado por: IA Educativa")
+    info_run.italic = True
+    
+    # Línea separadora
+    doc.add_paragraph("=" * 80)
+    
+    # Procesar contenido línea por línea con formato mejorado
+    lineas = contenido.split('\n')
+    for line in lineas:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Detectar encabezados
+        if line.startswith('#'):
+            level = line.count('#')
+            text = line.replace('#', '').strip()
+            if text:
+                doc.add_heading(text, level=min(level, 3))
+        
+        # Detectar tablas (líneas con múltiples |)
+        elif '|' in line and line.count('|') >= 2:
+            # Formatear como tabla o lista
+            cleaned_line = line.replace('|', ' | ').strip()
+            para = doc.add_paragraph(cleaned_line)
+            para.style = 'List Bullet'
+        
+        # Detectar listas con bullets
+        elif line.startswith(('•', '-', '*', '→')):
+            para = doc.add_paragraph()
+            para.style = 'List Bullet'
+            para.add_run(line[1:].strip())
+        
+        # Detectar texto en mayúsculas (posibles títulos)
+        elif line.isupper() and len(line) > 5:
+            doc.add_heading(line.title(), 2)
+        
+        # Texto normal
+        else:
+            if len(line) > 10:  # Solo agregar líneas con contenido significativo
+                doc.add_paragraph(line)
+    
+    # Pie de página
+    doc.add_page_break()
+    footer = doc.add_paragraph()
+    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    footer_run = footer.add_run("GENERADO POR SISTEMA IA EDUCATIVA\nMinisterio de Educación - República del Perú")
+    footer_run.italic = True
+    
+    # Convertir a bytes
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
 
-# --- Interfaz de Streamlit ---
+# Solo mostrar tabs si todo está OK
+if SERVICES_OK:
+    st.success("🎉 ¡Sistema listo! Genera tu programación curricular.")
+    
+    # Crear tabs
+    tab1, tab2, tab3 = st.tabs(["📚 Programación Curricular", "🖼️ Imágenes Educativas", "🗣️ Análisis de Comentarios"])
+    
+    with tab1:
+        st.header("📚 Generador de Programación Curricular")
+        
+        # Información contextual
+        with st.expander("ℹ️ Información sobre la Programación Curricular"):
+            st.markdown("""
+            **¿Qué incluye una programación curricular?**
+            - ✅ Competencias y capacidades específicas
+            - ✅ Contenidos organizados por unidades
+            - ✅ Desempeños observables y medibles
+            - ✅ Criterios e instrumentos de evaluación
+            - ✅ Estrategias metodológicas
+            
+            **Basado en:** Currículo Nacional de Educación Básica - MINEDU Perú
+            """)
+        
+        with st.form("form_prog", clear_on_submit=False):
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                grado = st.selectbox("🎓 Grado", [3, 4, 5], format_func=lambda x: f"{x}º Secundaria")
+                
+                # Contenidos predefinidos por grado
+                contenidos_por_grado = {
+                    3: "1. LA FÍSICA Y MAGNITUDES\n2. VECTORES EN EL PLANO\n3. CINEMÁTICA\n4. DINÁMICA LINEAL\n5. TRABAJO Y ENERGÍA\n6. QUÍMICA Y MATERIA",
+                    4: "1. ONDAS Y SONIDO\n2. ÓPTICA GEOMÉTRICA\n3. ELECTRICIDAD\n4. MAGNETISMO\n5. QUÍMICA ORGÁNICA\n6. BIOQUÍMICA",
+                    5: "1. FÍSICA MODERNA\n2. TERMODINÁMICA\n3. FÍSICA NUCLEAR\n4. QUÍMICA AVANZADA\n5. BIOTECNOLOGÍA\n6. INVESTIGACIÓN CIENTÍFICA"
+                }
+            
+            with col2:
+                competencia = st.text_area(
+                    "🎯 Competencia Principal", 
+                    "Indaga mediante métodos científicos para construir sus conocimientos.",
+                    height=80,
+                    help="Competencia principal del área de Ciencia y Tecnología"
+                )
+            
+            capacidades = st.text_area(
+                "⚡ Capacidades Específicas",
+                "• Problematiza situaciones para hacer indagación.\n"
+                "• Diseña estrategias para hacer indagación.\n" 
+                "• Genera y registra datos o información.\n"
+                "• Analiza datos e información.\n"
+                "• Evalúa y comunica el proceso y resultados de su indagación.",
+                height=120,
+                help="Capacidades que desarrollará el estudiante"
+            )
+            
+            contenidos = st.text_area(
+                "📖 Contenidos Curriculares",
+                contenidos_por_grado[grado],
+                height=120,
+                help="Contenidos organizados por unidades temáticas"
+            )
+            
+            generar = st.form_submit_button("🎯 Generar Programación Curricular Completa", use_container_width=True)
+        
+        # FUERA del formulario - manejar resultados
+        if generar:
+            with st.spinner('🔄 Generando programación curricular profesional...'):
+                try:
+                    resultado_raw = generar_programacion_curricular(grado, competencia, capacidades, contenidos)
+                    
+                    temp = resultado_raw
+                    # Formatear el contenido
+                    contenido_formateado = formatear_contenido_educativo(resultado_raw, grado)
+                    contenido_formateado = temp
+                    st.success("✅ ¡Programación curricular generada exitosamente!")
+                    
+                    # Mostrar resultado formateado
+                    st.markdown("---")
+                    st.markdown(contenido_formateado)
+                    st.markdown("---")
+                    
+                    # Botones de descarga
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.download_button(
+                            "📄 Descargar TXT",
+                            data=contenido_formateado,
+                            file_name=f"programacion_curricular_{grado}to_secundaria.txt",
+                            mime="text/plain",
+                            key="download_txt_prog",
+                            use_container_width=True
+                        )
+                    
+                    with col2:
+                        if DOCX_OK:
+                            doc_bytes = crear_documento_profesional(resultado_raw, f"Programación Curricular {grado}º Secundaria", grado)
+                            if doc_bytes:
+                                st.download_button(
+                                    "📝 Descargar WORD",
+                                    data=doc_bytes,
+                                    file_name=f"programacion_curricular_{grado}to_secundaria.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key="download_docx_prog",
+                                    use_container_width=True
+                                )
+                        else:
+                            st.button("📝 WORD no disponible", disabled=True, key="docx_disabled_prog", use_container_width=True)
+                    
+                    with col3:
+                        # Botón para generar nueva programación
+                        if st.button("🔄 Generar Nueva", key="nueva_prog", use_container_width=True):
+                            st.rerun()
+                            
+                except Exception as e:
+                    st.error(f"❌ Error generando programación: {str(e)}")
+                    st.info("💡 Verifica la conexión con AWS Bedrock")
+    
+    with tab2:
+        st.header("🖼️ Generador de Imágenes Educativas")
+        
+        with st.form("form_img"):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                prompt = st.text_area(
+                    "🎨 Descripción de la imagen educativa",
+                    "Estudiantes de secundaria realizando un experimento de física en un laboratorio moderno, "
+                    "con materiales científicos, ambiente bien iluminado, estilo fotográfico profesional",
+                    height=100
+                )
+            
+            with col2:
+                st.markdown("**💡 Sugerencias:**")
+                st.markdown("- Laboratorio de ciencias")
+                st.markdown("- Experimento de química")
+                st.markdown("- Aula de física moderna")
+                st.markdown("- Estudiantes investigando")
+            
+            generar_img = st.form_submit_button("🎨 Generar Imagen Educativa", use_container_width=True)
+        
+        # FUERA del formulario
+        if generar_img:
+            with st.spinner('🎨 Generando imagen educativa...'):
+                try:
+                    imagen = generar_imagen_promocional(prompt)
+                    if imagen.startswith("Error"):
+                        st.error(imagen)
+                    else:
+                        st.subheader("🖼️ Imagen Educativa Generada")
+                        st.image(imagen, caption=f"Imagen generada: {prompt[:50]}...", use_column_width=True)
+                except Exception as e:
+                    st.error(f"❌ Error generando imagen: {str(e)}")
+    
+    with tab3:
+        st.header("🗣️ Análisis de Comentarios Educativos")
+        
+        with st.form("form_comment"):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                comentarios = st.text_area(
+                    "💬 Comentarios de estudiantes/docentes",
+                    "Las clases de ciencia son muy interesantes y aprendo mucho.\n"
+                    "Me gustaría tener más experimentos prácticos en el laboratorio.\n"
+                    "A veces los conceptos de física son difíciles de entender.\n"
+                    "El profesor explica muy bien los temas de química.",
+                    height=120
+                )
+            
+            with col2:
+                st.markdown("**📊 El análisis incluirá:**")
+                st.markdown("- Sentimientos generales")
+                st.markdown("- Temas de interés")
+                st.markdown("- Áreas de mejora")
+                st.markdown("- Recomendaciones")
+            
+            analizar = st.form_submit_button("🔍 Analizar Comentarios", use_container_width=True)
+        
+        # FUERA del formulario
+        if analizar and comentarios.strip():
+            with st.spinner('🔍 Analizando comentarios educativos...'):
+                try:
+                    analisis_raw = generar_resumen_comentarios(comentarios)
+                    
+                    # Formatear análisis
+                    analisis_formateado = f"""
+# 📊 ANÁLISIS DE COMENTARIOS EDUCATIVOS
 
-st.set_page_config(layout="wide", page_title="Dashboard de Análisis de Comentarios de Snacks")
+## 📅 {datetime.now().strftime('%d de %B de %Y')}
 
-st.title("Dashboard de Análisis de Comentarios de Clientes")
-st.markdown("Visualización en tiempo real del sentimiento y las tendencias de los comentarios sobre los nuevos snacks.")
+---
 
-# Sidebar para acciones
-st.sidebar.header("Acciones")
-if st.sidebar.button("Refrescar Datos"):
-    st.cache_data.clear() # Limpiar caché para forzar recarga de datos
-    st.experimental_rerun() # Volver a ejecutar la app
+### 📝 COMENTARIOS ANALIZADOS
+{comentarios}
 
-# --- Cargar datos ---
-@st.cache_data(ttl=60) # Cachea los datos por 60 segundos
-def load_data():
-    data = db_manager.get_all_comments()
-    df = pd.DataFrame(data)
-    if not df.empty:
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df = df.sort_values('timestamp', ascending=True)
-    return df
+---
 
-comments_df = load_data()
+### 🔍 ANÁLISIS DETALLADO
+{analisis_raw}
 
-if comments_df.empty:
-    st.warning("No hay comentarios disponibles en la base de datos de DynamoDB. Asegúrate de que tu Lambda esté procesando datos en S3.")
+---
+
+### 📋 RECOMENDACIONES GENERALES
+- Implementar metodologías activas de enseñanza
+- Fomentar el aprendizaje experimental
+- Adaptar estrategias según retroalimentación estudiantil
+- Mantener comunicación constante con estudiantes
+
+---
+
+*Análisis generado por Sistema IA Educativa*
+"""
+                    
+                    st.success("✅ ¡Análisis completado!")
+                    st.markdown("---")
+                    st.markdown(analisis_formateado)
+                    st.markdown("---")
+                    
+                    # Botones de descarga
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.download_button(
+                            "📄 Descargar Análisis TXT",
+                            data=analisis_formateado,
+                            file_name=f"analisis_comentarios_{datetime.now().strftime('%Y%m%d')}.txt",
+                            mime="text/plain",
+                            key="download_txt_analisis",
+                            use_container_width=True
+                        )
+                    
+                    with col2:
+                        if DOCX_OK:
+                            doc_bytes = crear_documento_profesional(analisis_raw, "Análisis de Comentarios Educativos", "Análisis")
+                            if doc_bytes:
+                                st.download_button(
+                                    "📝 Descargar WORD", 
+                                    data=doc_bytes,
+                                    file_name=f"analisis_comentarios_{datetime.now().strftime('%Y%m%d')}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key="download_docx_analisis",
+                                    use_container_width=True
+                                )
+                        else:
+                            st.button("📝 WORD no disponible", disabled=True, key="docx_disabled_analisis", use_container_width=True)
+                            
+                except Exception as e:
+                    st.error(f"❌ Error en análisis: {str(e)}")
+        elif analizar:
+            st.warning("⚠️ Por favor ingresa algunos comentarios para analizar")
+
 else:
-    # Sección 1: Rendimiento General de los Comentarios
-    st.header("Rendimiento General de los Comentarios")
-    st.markdown("---")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.subheader("Volumen de Comentarios Totales")
-        comments_by_time = comments_df.set_index('timestamp').resample('H').size().reset_index(name='count')
-        fig_volume = px.line(comments_by_time, x='timestamp', y='count', title='Comentarios por Hora')
-        st.plotly_chart(fig_volume, use_container_width=True)
-
-    with col2:
-        st.subheader("Distribución del Sentimiento")
-        sentiment_counts = comments_df['sentiment'].value_counts().reset_index()
-        sentiment_counts.columns = ['Sentimiento', 'Cantidad']
-        fig_sentiment = px.pie(sentiment_counts, values='Cantidad', names='Sentimiento', 
-                               title='Porcentaje de Sentimientos', hole=0.3)
-        st.plotly_chart(fig_sentiment, use_container_width=True)
-
-    with col3:
-        st.subheader("Puntaje de Sentimiento Promedio")
-        avg_sentiment_kpi = calculate_average_sentiment_score(comments_df)
-        st.metric(label="Puntaje Promedio (1-5)", value=f"{avg_sentiment_kpi:.2f}")
-
-    st.subheader("Nube de Palabras Clave")
-    word_cloud_data = create_word_cloud_data(comments_df)
-    if word_cloud_data:
-        st.write("Las palabras más frecuentes son:")
-        st.write(", ".join([f"**{w['text']}** ({w['value']})" for w in word_cloud_data]))
-    else:
-        st.info("No hay palabras clave para mostrar.")
-
-    st.markdown("<br>", unsafe_allow_html=True) # Espacio
-
-    # Sección 2: Resúmenes de Bedrock y Detalles
-    st.header("📝 Resúmenes de Bedrock y Detalles")
-    st.markdown("---")
-
-
-    # Para un dashboard real-time, estos resúmenes serían generados por la Lambda y almacenados en DynamoDB.
-    st.subheader("Últimos Resúmenes de IAGen")
-    # st.table(comments_df[['timestamp', 'text', 'summary_bedrock']].tail(5))
+    st.error("⚠️ Los servicios no están disponibles. Verifica la configuración.")
     
-    latest_comments_display = db_manager.get_latest_comments(limit=5)
-    if latest_comments_display:
-        st.dataframe(pd.DataFrame(latest_comments_display)[['timestamp', 'text', 'sentiment', 'entities']])
-        st.info("Nota: Para resúmenes generados por IAGen, la Lambda debería almacenarlos en DynamoDB junto con el comentario.")
-    else:
-        st.info("No hay comentarios recientes para mostrar.")
+    with st.expander("🔧 Información de diagnóstico"):
+        st.write(f"**Archivo actual:** {__file__}")
+        st.write(f"**Directorio actual:** {os.getcwd()}")
+        st.write(f"**Directorio del archivo:** {os.path.dirname(__file__)}")
+        st.write(f"**Directorio padre:** {os.path.dirname(os.path.dirname(__file__))}")
+        
+        core_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'core')
+        st.write(f"**Buscando core en:** {core_path}")
+        st.write(f"**Core existe:** {os.path.exists(core_path)}")
+        
+        if os.path.exists(core_path):
+            st.write(f"**Archivos en core:** {os.listdir(core_path)}")
 
-
-    st.subheader("Comentarios Detallados")
-    # Filtros para comentarios
-    selected_sentiment = st.multiselect("Filtrar por Sentimiento", comments_df['sentiment'].unique(), comments_df['sentiment'].unique())
-    filtered_comments_df = comments_df[comments_df['sentiment'].isin(selected_sentiment)]
-    
-    st.dataframe(filtered_comments_df[['timestamp', 'text', 'sentiment', 'entities']].sort_values(by='timestamp', ascending=False))
-    
-    st.markdown("<br>", unsafe_allow_html=True) # Espacio
-
-    # Sección 3: Tendencias en el Tiempo
-    st.header("📉 Tendencias en el Tiempo")
-    st.markdown("---")
-
-    st.subheader("Tendencia del Sentimiento Promedio")
-    sentiment_trend_df = comments_df.copy()
-    # Aquí sentiment_map ya estará definido globalmente
-    sentiment_trend_df['sentiment_score_numeric'] = sentiment_trend_df['sentiment'].map(sentiment_map).fillna(0)
-    sentiment_daily_avg = sentiment_trend_df.set_index('timestamp').resample('D')['sentiment_score_numeric'].mean().reset_index()
-    sentiment_daily_avg.columns = ['Fecha', 'Puntaje Promedio']
-    fig_sentiment_trend = px.line(sentiment_daily_avg, x='Fecha', y='Puntaje Promedio', 
-                                title='Evolución del Puntaje de Sentimiento Promedio')
-    st.plotly_chart(fig_sentiment_trend, use_container_width=True)
-
-    # Comparación de Productos (Placeholder - Requiere datos de otros productos)
-    st.subheader("Comparación de Productos (Ejemplo)")
-    st.info("Esta sección compara el sentimiento del nuevo snack con otros productos existentes. Se necesitan datos adicionales de otros productos para esta funcionalidad.")
-    # Ejemplo de datos para comparación (reemplazar con datos reales de DynamoDB)
-    comparison_data = {
-        'Producto': ['Nuevo Snack', 'Snack A (Existente)', 'Snack B (Existente)'],
-        'Puntaje Sentimiento Promedio': [avg_sentiment_kpi, 4.2, 3.5]
-    }
-    comparison_df = pd.DataFrame(comparison_data)
-    fig_comparison = px.bar(comparison_df, x='Producto', y='Puntaje Sentimiento Promedio',
-                            title='Comparación de Sentimiento entre Productos')
-    st.plotly_chart(fig_comparison, use_container_width=True)
-
-    st.markdown("<br>", unsafe_allow_html=True) # Espacio
-
-    # Sección 4: Métricas de Valor para el Negocio
-    st.header("🚀 Métricas de Valor para el Negocio")
-    st.markdown("---")
-
-    st.subheader("Puntaje de Valor del Producto (PVG)")
-    # Simulación de PVG: Ponderar positivos en base a entidades clave
-    positive_comments = comments_df[comments_df['sentiment'] == 'POSITIVE']
-    # En un caso real, esto sería más complejo, por ejemplo, buscando menciones de 'sabor', 'textura', 'nutritivo'
-    if not positive_comments.empty:
-        pvg_score = positive_comments['sentiment_score_numeric'].mean() * 1.2 # Ejemplo de ponderación
-        st.metric(label="Puntaje de Valor del Producto (PVG)", value=f"{pvg_score:.2f}")
-    else:
-        st.info("No hay suficientes comentarios positivos para calcular el PVG.")
-
-    st.subheader("Alerta de Problema Recurrente")
-    # Buscar entidades negativas recurrentes
-    negative_comments = comments_df[comments_df['sentiment'] == 'NEGATIVE']
-    all_negative_entities = [entity['Text'].lower() for comment in negative_comments['entities'] for entity in comment]
-    negative_entity_counts = Counter(all_negative_entities)
-
-    alert_threshold = 3 # Si un tema negativo se repite X veces
-    recurrent_issues = {entity: count for entity, count in negative_entity_counts.items() if count >= alert_threshold}
-
-    if recurrent_issues:
-        st.error("🚨 Alerta: ¡Problemas recurrentes detectados!")
-        for issue, count in recurrent_issues.items():
-            st.write(f"- El tema **'{issue}'** se repite **{count}** veces en comentarios negativos.")
-        st.warning("Se recomienda investigar estos temas de inmediato.")
-    else:
-        st.success("🎉 No se detectaron problemas recurrentes significativos.")
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center'>
+<h6>🎓 Sistema de Generación de Contenido Educativo con IA</h6>
+<p><em>Desarrollado para el Ministerio de Educación del Perú</em></p>
+</div>
+""", unsafe_allow_html=True)

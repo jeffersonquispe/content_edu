@@ -1,0 +1,12 @@
+{
+  "opensearchServerlessConfiguration": {
+    "collectionArn": "arn:aws:aoss:us-east-1:183150676819:collection/kb-collection",
+    "vectorIndexName": "indice-curriculo",
+    "fieldMapping": {
+      "vectorField": "vector_embedding",
+      "textField": "text_content",
+      "metadataField": "metadata"
+    }
+  },
+  "type": "OPENSEARCH_SERVERLESS"
+}
